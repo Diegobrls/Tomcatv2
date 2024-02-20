@@ -1,17 +1,17 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Despliegue app Java sobre instancia EC2 con ubuntu 20.04
+Description: Despliegue de una aplicación Java en una instancia EC2
 
 Parameters:
-  EC2AMI:
-    Description: Imagen del Sistema Operativo
+  UbuntuAMI:
+    Description: Imagen del Sistema Operativo Ubuntu
     Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
     Default: '/aws/service/canonical/ubuntu/server/20.04/stable/current/amd64/hvm/ebs-gp2/ami-id'
-  KeyName:
-    Description: Par clave valor para acceso SSH
+  SSHKeyName:
+    Description: Par clave-valor
     Type: AWS::EC2::KeyPair::KeyName
     Default: vockey
-  InstanceType:
-    Description: Tamaño instancia EC2
+  InstanceSize:
+    Description: Tamaño de la instancia EC2
     Type: String
     Default: t2.small
     AllowedValues:
@@ -19,18 +19,18 @@ Parameters:
       - t2.micro
       - t2.small
       - t2.medium
-    ConstraintDescription: Tipos de instancia validas
-  SSHLocation:
-    Description: The IP address range that can be used to SSH to the EC2 instances
+    ConstraintDescription: Tipos de instancia válidos
+  SSHAllowed:
+    Description: Rango de direcciones IP que pueden acceder por SSH a las instancias EC2
     Type: String
     MinLength: '9'
     MaxLength: '18'
     Default: 0.0.0.0/0
     AllowedPattern: "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})"
-    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+    ConstraintDescription: Debe ser un rango IP CIDR válido en la forma x.x.x.x/x.
 
 Resources:
-  EC2Instance:
+  ApplicationInstance:
     Type: AWS::EC2::Instance
     CreationPolicy:
       ResourceSignal:
@@ -63,11 +63,11 @@ Resources:
                   - ''
                   - - "[cfn-auto-reloader-hook]\n"
                     - "triggers=post.update\n"
-                    - "path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init\n"
+                    - "path=Resources.ApplicationInstance.Metadata.AWS::CloudFormation::Init\n"
                     - "action=/opt/aws/bin/cfn-init -v"
                     - "--stack "
                     - Ref: AWS::StackName
-                    - " --resource EC2Instance"
+                    - " --resource ApplicationInstance"
                     - " --configsets full_install"
                     - " --region "
                     - Ref: AWS::Region
@@ -91,55 +91,55 @@ Resources:
             02start_cfn_hup:
               command: systemctl start cfn-hup.service
     Properties:
-      InstanceType: !Ref InstanceType
+      InstanceType: !Ref InstanceSize
       SecurityGroups:
-        - Ref: SecurityGroup
-      KeyName: !Ref KeyName
-      IamInstanceProfile: "LabInstanceProfile"
+        - Ref: InstanceSecurityGroup
+      KeyName: !Ref SSHKeyName
+      IamInstanceProfile: "ApplicationInstanceProfile"
       Monitoring: true
-      ImageId: !Ref EC2AMI
+      ImageId: !Ref UbuntuAMI
       UserData:
         Fn::Base64: !Sub |
           #!/bin/bash -xe
           exec > /tmp/userdata.log 2>&1
-          # Actualizar todas las apps
+          # Actualizar todas las aplicaciones
           apt update -y
-          # Instalar unzip
+          # Instalar unzip y CodeDeploy
           apt install unzip
-          # Instalación CodeDeploy Agent
           apt install ruby-full -y
           apt install wget -y
+          # Navegar al directorio ubuntu
           cd /home/ubuntu
           wget https://aws-codedeploy-us-east-1.s3.us-east-1.amazonaws.com/latest/install
+          # Permisos de ejecucion
           chmod +x ./install
           ./install auto > /tmp/logfile
           service codedeploy-agent start
-          # Instalar AWS helper scripts de CloudFormation
+          # Instalar los scripts de ayuda de AWS CloudFormation
           mkdir -p /opt/aws/bin
           wget https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz
           python3 -m easy_install --script-dir /opt/aws/bin aws-cfn-bootstrap-py3-latest.tar.gz
           ln -s /root/aws-cfn-bootstrap-latest/init/ubuntu/cfn-hup /etc/init.d/cfn-hup
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance --configsets full_install --region ${AWS::Region}
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource ApplicationInstance --configsets full_install --region ${AWS::Region}
           sleep 1
-          # Añadir un usuario para Tomcat
+          # Agregar un usuario para Tomcat
           useradd -m -d /opt/tomcat -U -s /bin/false tomcat
           # Actualizar el sistema
           apt update
           # Instalar Java
           apt install openjdk-17-jdk -y
-          # Comprobar la versión de Java
           java -version
           # Navegar al directorio /tmp
           cd /tmp
           # Descargar el archivo usando wget
           wget https://dlcdn.apache.org/tomcat/tomcat-10/v10.1.18/bin/apache-tomcat-10.1.18.tar.gz
-          # Extraer el archivo que hemos descargado
+          # Extraerlo
           tar xzvf apache-tomcat-10*tar.gz -C /opt/tomcat --strip-components=1
-          # Cambiar el propietario del directorio y de todos sus archivos
+          # Cambiar los permisos del propietario
           chown -R tomcat:tomcat /opt/tomcat/
           # Cambiar los permisos del directorio
           chmod -R u+x /opt/tomcat/bin
-          # Añadir usuarios para acceder a la interfaz de administración de Tomcat
+          # Agregar usuarios para acceder a la interfaz de administración de Tomcat
           cat << 'EOF' | tee /opt/tomcat/conf/tomcat-users.xml > /dev/null
           <?xml version='1.0' encoding='utf-8'?>
           <tomcat-users>
@@ -200,38 +200,38 @@ Resources:
           # Navegar al directorio /tmp
           cd /tmp
           # Clonar el repositorio de la aplicación
-          git clone https://github.com/JuliioGranadoss/Tomcat
+          git clone https://github.com/Diegobrls/Tomcatv2
           # Navegar al directorio de la aplicación
           cd  Tomcatv2/springholamundo
-          # Hacer el archivo gradlew ejecutable
+          # Hacer el archivo gradlew ejecutable y compilar
           chmod +x gradlew
-          # Compilar la aplicación
           ./gradlew war
           # Copiar el archivo war a la carpeta webapps de Tomcat
           mv build/libs/HolaMundo.war /opt/tomcat/webapps
-          # Esta tiene que ser la ultima instrucción
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+          # Esta tiene que ser la última instrucción
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource ApplicationInstance --region ${AWS::Region}
 
-  SecurityGroup:
+  InstanceSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Acesso SSH y web en 8080
+      GroupDescription: Acceso SSH y web en el puerto 8080
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: !Ref SSHLocation
+          CidrIp: !Ref SSHAllowed
         - IpProtocol: tcp
           FromPort: 8080
           ToPort: 8080
-          CidrIp: !Ref SSHLocation
+          CidrIp: !Ref SSHAllowed
       Tags:
         - Key: Name
           Value: !Ref AWS::StackName
 
 Outputs:
-  IPaddress:
-    Description: The public IP address of the EC2 instance
-    Value: !Sub "http://${EC2Instance.PublicIp}:8080"
+  PublicIPAddress:
+    Description: La dirección IP pública de la instancia EC2
+    Value: !Sub "http://${ApplicationInstance.PublicIp}:8080"
     Export:
-      Name: IPaddress
+      Name: PublicIPAddress
+
