@@ -1,5 +1,5 @@
 #!/bin/bash
 
-STACK_NAME="web-app-stack"
+STACK_NAME="Tomcat-stack"
 
 aws cloudformation delete-stack --stack-name "$STACK_NAME"
