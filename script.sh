@@ -1,54 +1,84 @@
 #!/bin/bash
 
-id tomcat || useradd -m -d /opt/tomcat -U -s /bin/false tomcat
-apt-get update -y
-apt-get upgrade -y
+# Crear un usuario para Tomcat
+useradd -m -d /opt/tomcat -U -s /bin/false tomcat_user
 
-# Instalación del JDK
-apt install openjdk-17-jdk-headless -y
-wget https://dlcdn.apache.org/tomcat/tomcat-10/v10.1.18/bin/apache-tomcat-10.1.18.tar.gz -O /tmp/tomcat.tar.gz
-tar xzvf /tmp/tomcat.tar.gz -C /opt/tomcat --strip-components=1
-chown -R tomcat:tomcat /opt/tomcat/
+# Actualizar el sistema operativo
+apt-get update
+
+# Instalar la versión 17 de OpenJDK
+apt-get install openjdk-17-jdk -y
+
+# Comprobar la versión de Java
+java -version
+
+# Navegar a /tmp
+cd /tmp
+
+# Descargar el archivo de instalación de Apache Tomcat
+wget https://dlcdn.apache.org/tomcat/tomcat-10/v10.1.18/bin/apache-tomcat-10.1.18.tar.gz
+
+# Descomprimir el archivo descargado y moverlo a la ubicación de Tomcat
+tar xzvf apache-tomcat-10*tar.gz -C /opt/tomcat --strip-components=1
+
+# Cambiar el propietario y los permisos de los archivos de Tomcat
+chown -R tomcat_user:tomcat_user /opt/tomcat/
 chmod -R u+x /opt/tomcat/bin
 
-cp /opt/tomcat/conf/tomcat-users.xml /opt/tomcat/conf/tomcat-users-backup.xml
+# Configurar los usuarios para acceder a la interfaz de administración de Tomcat
+cat << 'EOF' | tee /opt/tomcat/conf/tomcat-users.xml > /dev/null
+<?xml version='1.0' encoding='utf-8'?>
+<tomcat-users>
+  <role rolename="manager-gui" />
+  <user username="manager" password="manager_password" roles="manager-gui" />
 
-sed -i '/<\/tomcat-users>/i\
-  <role rolename="manager-gui" />\
-  <user username="manager" password="usuario" roles="manager-gui" />\
-\
-  <role rolename="admin-gui" /> \
-  <user username="admin" password="usuario" roles="manager-gui,admin-gui" />' /opt/tomcat/conf/tomcat-users.xml
+  <role rolename="admin-gui" />
+  <user username="admin" password="admin_password" roles="manager-gui,admin-gui" />
+</tomcat-users>
+EOF
 
-# manager
-sed -i '/<Valve/i\<!--' /opt/tomcat/webapps/manager/META-INF/context.xml
-sed -i '/allow="127/a-->' /opt/tomcat/webapps/manager/META-INF/context.xml
+# Configurar el archivo de contexto para el Manager de Tomcat
+cat << 'EOF' | tee /opt/tomcat/webapps/manager/META-INF/context.xml > /dev/null
+<?xml version="1.0" encoding="UTF-8"?>
+<Context antiResourceLocking="false" privileged="true" >
+  <CookieProcessor className="org.apache.tomcat.util.http.Rfc6265CookieProcessor"
+                   sameSiteCookies="strict" />
+</Context>
+EOF
 
-# host-manager
-sed -i '/<Valve/i\<!--' /opt/tomcat/webapps/host-manager/META-INF/context.xml
-sed -i '/allow="127/a-->' /opt/tomcat/webapps/host-manager/META-INF/context.xml
+# Configurar el archivo de contexto para el Host Manager de Tomcat
+cat << 'EOF' | tee /opt/tomcat/webapps/host-manager/META-INF/context.xml > /dev/null
+<?xml version="1.0" encoding="UTF-8"?>
+<Context antiResourceLocking="false" privileged="true" >
+  <CookieProcessor className="org.apache.tomcat.util.http.Rfc6265CookieProcessor"
+                   sameSiteCookies="strict" />
+</Context>
+EOF
 
-# Creamos el archivo tomcat.service con el texto contenido a continuación, hasta EOF
-cat <<EOF | tee -a /etc/systemd/system/tomcat.service > /dev/null
+# Crear un servicio systemd para Tomcat
+JAVA_HOME_PATH=$(update-java-alternatives -l | awk '{print $3}')
+CATALINA_HOME="/opt/tomcat"
+
+cat <<EOF | tee /etc/systemd/system/tomcat.service > /dev/null
 [Unit]
-Description=Tomcat
+Description=Servidor Apache Tomcat
 After=network.target
 
 [Service]
 Type=forking
 
-User=tomcat
-Group=tomcat
+User=tomcat_user
+Group=tomcat_user
 
-Environment="JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64"
+Environment="JAVA_HOME=$JAVA_HOME_PATH"
 Environment="JAVA_OPTS=-Djava.security.egd=file:///dev/urandom"
-Environment="CATALINA_BASE=/opt/tomcat"
-Environment="CATALINA_HOME=/opt/tomcat"
-Environment="CATALINA_PID=/opt/tomcat/temp/tomcat.pid"
+Environment="CATALINA_BASE=$CATALINA_HOME"
+Environment="CATALINA_HOME=$CATALINA_HOME"
+Environment="CATALINA_PID=$CATALINA_HOME/temp/tomcat.pid"
 Environment="CATALINA_OPTS=-Xms512M -Xmx1024M -server -XX:+UseParallelGC"
 
-ExecStart=/opt/tomcat/bin/startup.sh
-ExecStop=/opt/tomcat/bin/shutdown.sh
+ExecStart=$CATALINA_HOME/bin/startup.sh
+ExecStop=$CATALINA_HOME/bin/shutdown.sh
 
 RestartSec=10
 Restart=always
@@ -57,17 +87,13 @@ Restart=always
 WantedBy=multi-user.target
 EOF
 
-# Recargamos la configuración del sistema
+# Recargar el daemon
 systemctl daemon-reload
-# Inicia Tomcat
+# Iniciar el servicio Tomcat
 systemctl start tomcat
-# Mostrará por línea de comandos si Tomcat se ha iniciado correctamente al ejecutar el script
-echo '-----------------------------------------------------------'
-systemctl status tomcat | cat
-echo '-----------------------------------------------------------'
-# Habilitamos el inicio automático del servicio durante el arranque del sistema
+# Comprobar el estado
+systemctl status tomcat
+# Habilitar el inicio automático
 systemctl enable tomcat
-# Permitimos el tráfico por el puerto 8080, por el que escucha Tomcat
-systemctl restart tomcat
-# Accede a Tomcat a traves de esta URL
+
 echo "Accede a la interfaz de Tomcat con esta URL: http://54.90.218.138:8080"
